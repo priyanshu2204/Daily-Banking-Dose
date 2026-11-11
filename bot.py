@@ -1,5 +1,7 @@
 
 import os
+import re
+import html
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
@@ -10,8 +12,15 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "@dailybankingdose")
 
 RSS_URL = (
     "https://news.google.com/rss/search?"
-    "q=RBI+OR+banking+India&hl=en-IN&gl=IN&ceid=IN:en"
+    "q=RBI+OR+Indian+banking+OR+digital+banking"
+    "&hl=en-IN&gl=IN&ceid=IN:en"
 )
+
+def clean_text(raw):
+    text = html.unescape(raw or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 def get_news():
     feed = feedparser.parse(RSS_URL)
@@ -21,13 +30,25 @@ def get_news():
     for item in feed.entries:
         try:
             published = parsedate_to_datetime(item.published)
+
             if published < cutoff:
                 continue
 
+            summary = clean_text(
+                item.get("summary", "") or
+                item.get("description", "")
+            )
+
+            source = item.get("source", {}).get(
+                "title", "News source"
+            )
+
             articles.append({
                 "title": item.title,
-                "link": item.link
+                "summary": summary,
+                "source": source
             })
+
         except Exception:
             continue
 
@@ -45,6 +66,7 @@ def send_message(message):
         },
         timeout=30
     )
+
     response.raise_for_status()
 
 def main():
@@ -52,26 +74,44 @@ def main():
 
     if not articles:
         send_message(
-            "📰 Daily Banking Dose\n\n"
-            "Aaj koi verified recent news article nahi mila. "
-            "Please check again later."
+            "🏦 DAILY BANKING DOSE\n\n"
+            "Aaj koi recent news feed mein available nahi hai."
         )
         return
 
-    message = "🏦 DAILY BANKING DOSE\n"
-    message += "📅 " + datetime.now().strftime("%d-%m-%Y") + "\n"
-    message += "━━━━━━━━━━━━━━\n\n"
+    message = (
+        "🏦 DAILY BANKING DOSE\n"
+        "📅 " + datetime.now().strftime("%d-%m-%Y") +
+        "\n━━━━━━━━━━━━━━━━━━\n\n"
+    )
 
     for i, article in enumerate(articles, 1):
-        message += f"{i}. {article['title']}\n"
-        message += f"🔗 {article['link']}\n\n"
 
-    message += "━━━━━━━━━━━━━━\n"
-    message += "Follow @dailybankingdose"
+        message += f"📰 NEWS {i}\n\n"
+        message += f"📌 {article['title']}\n\n"
+
+        if article["summary"]:
+            message += (
+                "📖 NEWS SUMMARY:\n"
+                + article["summary"][:650]
+                + "\n\n"
+            )
+        else:
+            message += (
+                "📖 Detailed summary feed mein available nahi hai.\n\n"
+            )
+
+        message += f"🏢 Source: {article['source']}\n"
+        message += "━━━━━━━━━━━━━━━━━━\n\n"
+
+    message += (
+        "🎓 DAILY BANKING DOSE\n"
+        "Banking Knowledge | RBI | Current Affairs"
+    )
 
     send_message(message)
-    print("Banking news successfully posted!")
+    print("Detailed news digest posted successfully!")
 
 if __name__ == "__main__":
     main()
-  
+    
