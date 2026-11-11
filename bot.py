@@ -1,60 +1,99 @@
 
 import os
-import re
-import html
 import requests
-import feedparser
-from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
+import yfinance as yf
+from datetime import datetime
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL_ID = os.environ.get("CHANNEL_ID", "@dailybankingdose")
+CHANNEL_ID = "@dailybankingdose"
 
-RSS_URL = (
-    "https://news.google.com/rss/search?"
-    "q=RBI+OR+Indian+banking+OR+digital+banking"
-    "&hl=en-IN&gl=IN&ceid=IN:en"
-)
+def get_quote(symbol):
+    try:
+        data = yf.Ticker(symbol).history(
+            period="5d",
+            interval="1d"
+        )
+        data = data.dropna(subset=["Close"])
 
-def clean_text(raw):
-    text = html.unescape(raw or "")
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+        if len(data) < 1:
+            return None
 
-def get_news():
-    feed = feedparser.parse(RSS_URL)
-    articles = []
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        latest = float(data["Close"].iloc[-1])
+        previous = (
+            float(data["Close"].iloc[-2])
+            if len(data) > 1 else latest
+        )
 
-    for item in feed.entries:
-        try:
-            published = parsedate_to_datetime(item.published)
+        change = (
+            (latest - previous) / previous * 100
+            if previous else 0
+        )
 
-            if published < cutoff:
-                continue
+        date = data.index[-1].strftime("%d-%m-%Y")
 
-            summary = clean_text(
-                item.get("summary", "") or
-                item.get("description", "")
-            )
+        return {
+            "price": latest,
+            "change": change,
+            "date": date
+        }
 
-            source = item.get("source", {}).get(
-                "title", "News source"
-            )
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
 
-            articles.append({
-                "title": item.title,
-                "summary": summary,
-                "source": source
-            })
+def format_price(data, decimals=2):
+    if data is None:
+        return "Data unavailable"
 
-        except Exception:
-            continue
+    arrow = "🟢" if data["change"] >= 0 else "🔴"
 
-    return articles[:5]
+    return (
+        f"₹{data['price']:,.{decimals}f} "
+        f"{arrow} {data['change']:+.2f}%"
+    )
 
-def send_message(message):
+def main():
+
+    gold = get_quote("GC=F")
+    dollar = get_quote("USDINR=X")
+    ujjivan = get_quote("UJJIVANSFB.NS")
+    nifty = get_quote("^NSEI")
+    sensex = get_quote("^BSESN")
+
+    message = (
+        "🏦 DAILY BANKING DOSE\n"
+        "📅 " + datetime.now().strftime("%d-%m-%Y") +
+        "\n━━━━━━━━━━━━━━━━━━\n\n"
+        "🥇 GOLD PRICE (24K)\n"
+    )
+
+    if gold and dollar:
+        gold_inr = gold["price"] * dollar["price"] * 10 / 31.1034768
+        message += f"₹{gold_inr:,.0f} / 10 gram (approx.)\n"
+    else:
+        message += "Data unavailable\n"
+
+    message += (
+        "\n🏦 UJJIVAN SMALL FINANCE BANK\n"
+        + format_price(ujjivan) +
+        "\n\n"
+        "📊 NIFTY 50\n"
+        + format_price(nifty) +
+        "\n\n"
+        "📈 SENSEX\n"
+        + format_price(sensex) +
+        "\n\n"
+        "💵 USD / INR\n"
+        + (
+            f"₹{dollar['price']:.2f}"
+            if dollar else "Data unavailable"
+        )
+        + "\n\n━━━━━━━━━━━━━━━━━━\n"
+        "📌 Prices: Latest available daily closing data\n"
+        "🥇 Gold: Indicative international rate, not retail quote\n"
+        "📚 Stay updated with Daily Banking Dose"
+    )
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     response = requests.post(
@@ -68,49 +107,7 @@ def send_message(message):
     )
 
     response.raise_for_status()
-
-def main():
-    articles = get_news()
-
-    if not articles:
-        send_message(
-            "🏦 DAILY BANKING DOSE\n\n"
-            "Aaj koi recent news feed mein available nahi hai."
-        )
-        return
-
-    message = (
-        "🏦 DAILY BANKING DOSE\n"
-        "📅 " + datetime.now().strftime("%d-%m-%Y") +
-        "\n━━━━━━━━━━━━━━━━━━\n\n"
-    )
-
-    for i, article in enumerate(articles, 1):
-
-        message += f"📰 NEWS {i}\n\n"
-        message += f"📌 {article['title']}\n\n"
-
-        if article["summary"]:
-            message += (
-                "📖 NEWS SUMMARY:\n"
-                + article["summary"][:650]
-                + "\n\n"
-            )
-        else:
-            message += (
-                "📖 Detailed summary feed mein available nahi hai.\n\n"
-            )
-
-        message += f"🏢 Source: {article['source']}\n"
-        message += "━━━━━━━━━━━━━━━━━━\n\n"
-
-    message += (
-        "🎓 DAILY BANKING DOSE\n"
-        "Banking Knowledge | RBI | Current Affairs"
-    )
-
-    send_message(message)
-    print("Detailed news digest posted successfully!")
+    print("Daily market update posted successfully!")
 
 if __name__ == "__main__":
     main()
